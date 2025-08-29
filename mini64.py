@@ -107,10 +107,6 @@ class Console:
         line_h = self.font.get_height() + 2
         max_lines = (self.rect.height - 2*pad) // line_h
 
-        # status/title
-        title = '*** MINI C64 BASIC V2 *** ' + ('EDIT MODE' if self.prog_mode else 'READY.')
-        surf.blit(self.font.render(title, True, C64['text']), (x, y))
-        y += line_h
 
         if self.prog_mode and app:  # show program buffer with cursor highlight
             base = max(0, len(app.prog_lines) - (max_lines - 1))
@@ -620,7 +616,7 @@ class App:
         self.machine.run_program()
 
     def run(self):
-        # header shown in status bar; no need to log it
+        self.console.print('*** MINI C64 BASIC V2 ***')
         self.console.print(' 38911 BASIC BYTES FREE')
         self.console.print('READY.')
         sep_x = LEFT_W
