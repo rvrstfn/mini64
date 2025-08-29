@@ -598,7 +598,7 @@ class MiniC64:
             bas_files = [f for f in os.listdir('.') if f.lower().endswith('.bas')]
             if bas_files:
                 for f in sorted(bas_files):
-                    self.console.print(f'  {f}')
+                    self.console.print(f)
             else:
                 self.console.print('NO FILES FOUND')
             return
