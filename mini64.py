@@ -545,6 +545,31 @@ class MiniC64:
         self.running = False
         return None
 
+    def draw_turtle(self, screen, offset_x):
+        """Draw arrow-shaped triangle cursor showing turtle position and heading"""
+        # Calculate triangle points for arrow shape
+        cx, cy = self.x + offset_x, self.y
+        heading_rad = math.radians(self.heading)
+        
+        # Front point (sharp tip) - 12 pixels forward
+        front_x = cx + math.cos(heading_rad) * 12
+        front_y = cy + math.sin(heading_rad) * 12
+        
+        # Back points (wide base) - 6 pixels back, ±8 pixels perpendicular
+        back_angle1 = heading_rad + math.radians(135)  # 135° from heading
+        back_angle2 = heading_rad + math.radians(225)  # 225° from heading
+        back1_x = cx + math.cos(back_angle1) * 10
+        back1_y = cy + math.sin(back_angle1) * 10
+        back2_x = cx + math.cos(back_angle2) * 10
+        back2_y = cy + math.sin(back_angle2) * 10
+        
+        # Draw triangle - filled if pen down, outline if pen up
+        points = [(front_x, front_y), (back1_x, back1_y), (back2_x, back2_y)]
+        if self.pen_down:
+            pygame.draw.polygon(screen, (255, 255, 255), points)
+        else:
+            pygame.draw.polygon(screen, (255, 255, 255), points, 2)
+
     # ----------------------
     # Command line
     # ----------------------
@@ -569,6 +594,14 @@ class MiniC64:
             self.program = []
             self.variables.clear(); self.for_stack.clear(); self.rebuild_labels()
             self.console.print('READY.'); return
+        if U == 'DIR' or U == 'FILES':
+            bas_files = [f for f in os.listdir('.') if f.lower().endswith('.bas')]
+            if bas_files:
+                for f in sorted(bas_files):
+                    self.console.print(f'  {f}')
+            else:
+                self.console.print('NO FILES FOUND')
+            return
 
         # immediate command
         self.exec_statement(self.tokenize(s), {'pc': 0})
@@ -644,6 +677,8 @@ class App:
             pygame.draw.line(self.screen, (10, 10, 10), (sep_x, 0), (sep_x, H), 3)
             # blit gfx
             self.screen.blit(self.machine.gfx, (sep_x, 0))
+            # draw turtle cursor
+            self.machine.draw_turtle(self.screen, sep_x)
 
             pygame.display.flip()
             self.clock.tick(FPS)
