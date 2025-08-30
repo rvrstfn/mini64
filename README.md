@@ -9,6 +9,20 @@ pip install pygame-ce
 python mini64.py
 ```
 
+## Screenshots
+
+### Startup Interface
+![Startup Console](startup.png)
+*The main interface showing the console with turtle cursor positioned in the center of the graphics canvas*
+
+### Edit Mode
+![Edit Mode](edit-mode.png)
+*Program editor with syntax highlighting and auto line numbering for writing BASIC programs*
+
+### Graphics Output
+![Graphics Output](graphics-output.png)
+*Turtle graphics in action - completed square drawing with turtle cursor showing final position and heading*
+
 ## Interface
 
 - **Left Pane**: Console and program editor
