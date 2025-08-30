@@ -613,7 +613,7 @@ class App:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((W, H))
-        pygame.display.set_caption('*** MINI C64 BASIC V2 ***')
+        pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont('consolas', 18)
         self.console = Console((0, 0, LEFT_W, H), self.font)
@@ -649,7 +649,7 @@ class App:
         self.machine.run_program()
 
     def run(self):
-        self.console.print('*** MINI C64 BASIC V2 ***')
+        self.console.print(' *** MINI 64 BASIC V2 ***')
         self.console.print(' 38911 BASIC BYTES FREE')
         self.console.print('READY.')
         sep_x = LEFT_W
