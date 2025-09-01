@@ -146,6 +146,7 @@ class Console:
         y += (len(buf)) * line_h
 
         # input line
+        self.blink = (self.blink + 1) % FPS
         caret = '_' if (self.blink // (FPS//2)) % 2 == 0 else ' '
         disp = f"> {self.input}{caret}"
         surf.blit(self.font.render(disp, True, C64['text']), (x, y))
@@ -549,7 +550,7 @@ class MiniC64:
                 self.rebuild_labels()
                 self.console.print('READY.')
             except Exception as e:
-                self.console.print(f'?LOAD ERROR {e}')
+                self.console.print('?FILE NOT FOUND')
             return None
 
         # unknown
