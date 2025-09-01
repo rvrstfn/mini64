@@ -107,6 +107,15 @@ class Console:
         line_h = self.font.get_height() + 2
         max_lines = (self.rect.height - 2*pad) // line_h
 
+        # Check if shutting down
+        if app and app.machine.shutting_down:
+            # Center the countdown message
+            msg = f"TURNING OFF IN {app.machine.shutdown_counter}"
+            text_surf = self.font.render(msg, True, C64['text'])
+            text_x = self.rect.x + (self.rect.width - text_surf.get_width()) // 2
+            text_y = self.rect.y + (self.rect.height - text_surf.get_height()) // 2
+            surf.blit(text_surf, (text_x, text_y))
+            return
 
         if self.prog_mode and app:  # show program buffer with cursor highlight
             base = max(0, len(app.prog_lines) - (max_lines - 1))
@@ -292,6 +301,9 @@ class MiniC64:
         self.prog_cursor_line = 0
         self.prog_cursor_col = 0
         self.running = False
+        self.shutting_down = False
+        self.shutdown_time = 0
+        self.shutdown_counter = 0
 
     def enter_programming_mode(self):
         self.console.enter_prog_mode()
@@ -516,16 +528,16 @@ class MiniC64:
         # --- storage ---
         if cmd == 'SAVE':
             if not args:
-                self.console.print('USAGE: SAVE "NAME"'); return None
+                self.console.print('?MISSING FILENAME'); return None
             name = args[0].strip('"')
             with open(f"{name}.bas", 'w', encoding='utf-8') as f:
                 for ln, raw in self.program:
                     f.write(f"{ln} {raw}\n")
-            self.console.print(f'SAVED {name}.bas')
+            self.console.print(f'SAVED "{name}.bas"')
             return None
         if cmd == 'LOAD':
             if not args:
-                self.console.print('USAGE: LOAD "NAME"'); return None
+                self.console.print('?MISSING FILENAME'); return None
             name = args[0].strip('"')
             try:
                 with open(f"{name}.bas", 'r', encoding='utf-8') as f:
@@ -600,7 +612,14 @@ class MiniC64:
                 for f in sorted(bas_files):
                     self.console.print(f)
             else:
-                self.console.print('NO FILES FOUND')
+                self.console.print('?NO FILES FOUND')
+            return
+        if U == 'BYE':
+            # Set shutdown countdown state
+            import time
+            self.shutdown_time = time.time() + 3
+            self.shutdown_counter = 3
+            self.shutting_down = True
             return
 
         # immediate command
@@ -655,6 +674,17 @@ class App:
         sep_x = LEFT_W
 
         while True:
+            # Handle shutdown countdown
+            if self.machine.shutting_down:
+                import time
+                remaining = self.machine.shutdown_time - time.time()
+                new_counter = max(0, int(remaining) + 1)
+                if new_counter != self.machine.shutdown_counter:
+                    self.machine.shutdown_counter = new_counter
+                if remaining <= 0:
+                    pygame.quit()
+                    sys.exit()
+
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
