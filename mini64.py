@@ -616,9 +616,11 @@ class MiniC64:
                 self.console.print('?NO FILES FOUND')
             return
         if U == 'CLS':
-            # Clear console display and graphics
+            # Clear console display and graphics, reset turtle to center
             self.console.lines.clear()
             self.gfx.fill((30, 30, 92))  # Reset to default background color
+            self.x = (W - LEFT_W)//2  # Reset turtle to center
+            self.y = H//2
             self.console.print('READY.')
             return
         if U == 'BYE':

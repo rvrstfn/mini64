@@ -33,9 +33,10 @@ pip install pygame
 
 **BASIC Language Support:**
 - Core commands: `LET`, `PRINT`, `GOTO`, `FOR`/`NEXT`, `REM`, `END`
-- Program management: `LIST`, `RUN`, `NEW`, `EDIT`  
-- File operations: `SAVE "filename"`, `LOAD "filename"` (saves as .bas files)
+- Program management: `LIST`, `RUN`, `NEW`, `EDIT`, `CLS`  
+- File operations: `SAVE "filename"`, `LOAD "filename"`, `DIR` (saves as .bas files)
 - Turtle graphics: `FD`, `BK`, `RT`, `LT`, `GO`, `CIRCLE`, `PEN`, `PU`/`PD`, `BG`, `THICK`
+- Hidden command: `BYE` (undocumented easter egg for kiosk mode - exits with 3-second countdown)
 
 **Visual Layout:**
 - Left pane (320px): Console/editor interface
