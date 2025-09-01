@@ -614,6 +614,12 @@ class MiniC64:
             else:
                 self.console.print('?NO FILES FOUND')
             return
+        if U == 'CLS':
+            # Clear console display and graphics
+            self.console.lines.clear()
+            self.gfx.fill((30, 30, 92))  # Reset to default background color
+            self.console.print('READY.')
+            return
         if U == 'BYE':
             # Set shutdown countdown state
             import time
