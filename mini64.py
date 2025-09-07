@@ -418,6 +418,9 @@ class MiniC64:
             return None
         if cmd == 'PRINT':
             out = ' '.join(args)
+            # Check for unclosed quotes
+            if len(out) > 0 and out[0] == '"' and (len(out) == 1 or out[-1] != '"'):
+                self.console.print('?SYNTAX ERROR'); self.running = False; return None
             if len(out) >= 2 and out[0] == '"' and out[-1] == '"':
                 self.console.print(out[1:-1])
             else:
