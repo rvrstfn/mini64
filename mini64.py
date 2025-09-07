@@ -417,14 +417,32 @@ class MiniC64:
             self.variables[var] = self.num_or_var(expr)
             return None
         if cmd == 'PRINT':
+            if not args:
+                self.console.print('')
+                return None
+            
             out = ' '.join(args)
-            # Check for unclosed quotes
-            if len(out) > 0 and out[0] == '"' and (len(out) == 1 or out[-1] != '"'):
-                self.console.print('?SYNTAX ERROR'); self.running = False; return None
-            if len(out) >= 2 and out[0] == '"' and out[-1] == '"':
+            
+            # Check if it's a quoted string
+            if out.startswith('"'):
+                # Must be properly quoted with no extra content
+                if not out.endswith('"') or len(out) < 2:
+                    self.console.print('?SYNTAX ERROR'); self.running = False; return None
+                # Check for extra content after closing quote
+                quote_count = out.count('"')
+                if quote_count != 2:
+                    self.console.print('?SYNTAX ERROR'); self.running = False; return None
                 self.console.print(out[1:-1])
             else:
-                self.console.print(str(self.num_or_var(out)))
+                # Must be a valid variable or number
+                if len(args) > 1:
+                    # Multiple arguments without quotes is invalid
+                    self.console.print('?SYNTAX ERROR'); self.running = False; return None
+                try:
+                    result = self.num_or_var(out)
+                    self.console.print(str(result))
+                except:
+                    self.console.print('?SYNTAX ERROR'); self.running = False; return None
             return None
         if cmd == 'GOTO':
             target = int(args[0])
