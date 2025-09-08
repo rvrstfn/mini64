@@ -21,8 +21,17 @@ from collections import deque
 # ------------------------------
 # Config / Palette
 # ------------------------------
-W, H = 960, 720
-LEFT_W = 320
+# Auto-detect screen resolution and set proportional dimensions
+pygame.init()  # Need to init pygame first to get display info
+display_info = pygame.display.get_desktop_sizes()[0]
+SCREEN_W, SCREEN_H = display_info
+
+# Use 90% of screen size with reasonable minimums
+W = max(800, int(SCREEN_W * 0.9))
+H = max(600, int(SCREEN_H * 0.9))
+
+# Console pane takes 33% of width
+LEFT_W = int(W * 0.33)
 FPS = 60
 
 C64 = {
@@ -664,7 +673,9 @@ class App:
         self.screen = pygame.display.set_mode((W, H))
         pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont('consolas', 18)
+        # Scale font size based on screen resolution
+        font_size = max(12, int(H * 0.025))  # ~2.5% of screen height
+        self.font = pygame.font.SysFont('consolas', font_size)
         self.console = Console((0, 0, LEFT_W, H), self.font)
         self.machine = MiniC64(self.screen, self.console)
         # --- editor state owned by App ---
