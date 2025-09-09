@@ -32,7 +32,7 @@ H = max(600, int(SCREEN_H * 0.9))
 
 # Console pane takes 33% of width
 LEFT_W = int(W * 0.33)
-FPS = 60
+FPS = 15  # Lower FPS for better stability on all hardware including Raspberry Pi
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -314,6 +314,9 @@ class MiniC64:
         self.shutting_down = False
         self.shutdown_time = 0
         self.shutdown_counter = 0
+        # Emergency exit tracking
+        self.emergency_exit_start = 0
+        self.emergency_exit_active = False
 
     def enter_programming_mode(self):
         self.console.enter_prog_mode()
@@ -715,6 +718,9 @@ class App:
         sep_x = LEFT_W
 
         while True:
+            # Pump events to prevent freezes on slow hardware
+            pygame.event.pump()
+            
             # Handle shutdown countdown
             if self.machine.shutting_down:
                 import time
@@ -725,6 +731,22 @@ class App:
                 if remaining <= 0:
                     pygame.quit()
                     sys.exit()
+
+            # Check for emergency exit (Ctrl+Shift+Q held for 2 seconds)
+            keys = pygame.key.get_pressed()
+            ctrl_shift_q = keys[pygame.K_LCTRL] and keys[pygame.K_LSHIFT] and keys[pygame.K_q]
+            
+            if ctrl_shift_q:
+                if not self.machine.emergency_exit_active:
+                    import time
+                    self.machine.emergency_exit_start = time.time()
+                    self.machine.emergency_exit_active = True
+                elif time.time() - self.machine.emergency_exit_start >= 2.0:
+                    # Force exit after 2 seconds
+                    pygame.quit()
+                    sys.exit()
+            else:
+                self.machine.emergency_exit_active = False
 
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
