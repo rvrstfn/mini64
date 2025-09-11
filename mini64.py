@@ -16,6 +16,9 @@ import sys
 import math
 import re
 import os
+import time
+import logging
+import threading
 from collections import deque
 
 # ------------------------------
@@ -33,6 +36,22 @@ H = max(600, int(SCREEN_H * 0.9))
 # Console pane takes 33% of width
 LEFT_W = int(W * 0.33)
 FPS = 15  # Lower FPS for better stability on all hardware including Raspberry Pi
+
+# Optional debug logging
+DEBUG_ENABLED = os.environ.get('MINI64_LOG') or os.environ.get('MINI64_DEBUG')
+if DEBUG_ENABLED:
+    try:
+        logging.basicConfig(
+            filename='mini64.log',
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            filemode='w',
+            force=True,
+        )
+        logging.info('Mini64 starting')
+        logging.info(f'Resolution detected: {SCREEN_W}x{SCREEN_H}, window target: {W}x{H}, left pane: {LEFT_W}')
+    except Exception:
+        pass
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -295,7 +314,12 @@ class MiniC64:
         self.program = []  # list of (lineno, raw_line)
         self.labels = {}
         self.for_stack = []
-        self.gfx = pygame.Surface((W - LEFT_W, H))
+        # Use a display-formatted surface for faster blits on low-power devices
+        try:
+            self.gfx = pygame.Surface((W - LEFT_W, H)).convert()
+        except Exception:
+            # Fallback if display not initialized; convert() requires a display mode
+            self.gfx = pygame.Surface((W - LEFT_W, H))
         self.gfx.fill((30, 30, 92))
         # turtle state
         self.x = (W - LEFT_W)//2
@@ -398,16 +422,30 @@ class MiniC64:
             self.console.print('READY.')
             return
         self.running = True
-        rt = {
-            'pc': 0
-        }
+        rt = {'pc': 0}
+        ops = 0
         while self.running and rt['pc'] < len(self.program):
+            # Periodically yield to the event queue so ESC can break runaway loops
+            if (ops & 0xFF) == 0:  # every 256 ops
+                try:
+                    pygame.event.pump()
+                    keys = pygame.key.get_pressed()
+                    if keys and keys[pygame.K_ESCAPE]:
+                        self.console.print('BREAK')
+                        self.running = False
+                        break
+                    # Give the OS a tiny slice; helps Pi Zero W avoid hard lockups
+                    pygame.time.wait(1)
+                except Exception:
+                    pass
+
             ln, line = self.program[rt['pc']]
             delta = self.exec_statement(self.tokenize(line), rt)
             if delta is None:
                 rt['pc'] += 1
             else:
                 rt['pc'] += delta
+            ops += 1
         self.console.print('READY.')
         self.running = False
 
@@ -673,7 +711,15 @@ class MiniC64:
 class App:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((W, H))
+        flags = 0
+        if os.environ.get('MINI64_SCALED') == '1':
+            try:
+                flags |= pygame.SCALED
+                if DEBUG_ENABLED:
+                    logging.info('Using pygame.SCALED display mode')
+            except Exception:
+                pass
+        self.screen = pygame.display.set_mode((W, H), flags)
         pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
         self.clock = pygame.time.Clock()
         # Scale font size based on screen resolution
@@ -687,6 +733,25 @@ class App:
         self.prog_cursor_col = 3
         # keep interpreter pointing to the same list
         self.machine.prog_lines = self.prog_lines
+
+        # Heartbeat for watchdog and optional logging
+        self._last_tick = time.time()
+        self._last_heartbeat = 0.0
+
+        if DEBUG_ENABLED:
+            logging.info('App initialized')
+            # Background watchdog: detects if main loop stalls > 3s
+            def _watchdog():
+                while True:
+                    try:
+                        time.sleep(1.0)
+                        dt = time.time() - self._last_tick
+                        if dt > 3.0:
+                            logging.warning(f'Main loop stall detected: {dt:.2f}s without tick')
+                    except Exception:
+                        pass
+            t = threading.Thread(target=_watchdog, daemon=True)
+            t.start()
 
     def enter_programming_mode(self):
         # Build an editable buffer from the current program and switch UI
@@ -718,6 +783,14 @@ class App:
         sep_x = LEFT_W
 
         while True:
+            # Update heartbeat
+            self._last_tick = time.time()
+            if DEBUG_ENABLED and (self._last_tick - self._last_heartbeat) >= 1.0:
+                self._last_heartbeat = self._last_tick
+                try:
+                    logging.info('heartbeat alive')
+                except Exception:
+                    pass
             # Pump events to prevent freezes on slow hardware
             pygame.event.pump()
             
@@ -752,6 +825,11 @@ class App:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 if ev.type == pygame.KEYDOWN:
+                    if DEBUG_ENABLED:
+                        try:
+                            logging.info(f'KEYDOWN {ev.key} mods={pygame.key.get_mods()} prog_mode={self.console.prog_mode}')
+                        except Exception:
+                            pass
                     if ev.key == pygame.K_ESCAPE:
                         # toggle edit mode
                         if self.console.prog_mode:
@@ -778,6 +856,4 @@ class App:
 
 
 if __name__ == '__main__':
-    App().run()
-
     App().run()
