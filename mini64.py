@@ -503,6 +503,18 @@ class MiniC64:
             return None
         cmd = toks[0].upper()
         args = toks[1:]
+        aliases = {
+            'FORWARD': 'FD',
+            'BACK': 'BK',
+            'BACKWARD': 'BK',
+            'RIGHT': 'RT',
+            'LEFT': 'LT',
+            'MOVE': 'GO',
+            'GO': 'GO',
+            'PENUP': 'PU',
+            'PENDOWN': 'PD',
+        }
+        cmd = aliases.get(cmd, cmd)
 
         # --- BASIC keywords ---
         if cmd == 'REM':
