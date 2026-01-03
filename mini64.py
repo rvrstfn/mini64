@@ -648,6 +648,10 @@ class MiniC64:
             return None
         if cmd == 'GO':
             # GO x y
+            if len(args) < 2:
+                self.console.print('?SYNTAX ERROR')
+                self.running = False
+                return None
             nx = float(self.num_or_var(args[0])); ny = float(self.num_or_var(args[1]))
             if self.pen_down:
                 pygame.draw.line(self.gfx, self.color, (self.x, self.y), (nx, ny), self.thick)
