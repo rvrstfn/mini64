@@ -81,6 +81,10 @@ python mini64.py
 | `LT angle` | Turn left (degrees) | `LT 45` |
 | `GO x y` | Move to coordinates | `GO 100 200` |
 
+Aliases (same behavior):
+`FORWARD` → `FD`, `BACK`/`BACKWARD` → `BK`, `RIGHT` → `RT`, `LEFT` → `LT`,
+`MOVE`/`GO` → `GO`, `PENUP` → `PU`, `PENDOWN` → `PD`.
+
 ### Pen Control
 | Command | Description | Example |
 |---------|-------------|---------|
