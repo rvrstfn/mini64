@@ -16,6 +16,8 @@ import sys
 import math
 import re
 import os
+import time
+import traceback
 from collections import deque
 
 # ------------------------------
@@ -33,6 +35,10 @@ H = max(600, int(SCREEN_H * 0.9))
 # Console pane takes 33% of width
 LEFT_W = int(W * 0.33)
 FPS = 15  # Lower FPS for better stability on all hardware including Raspberry Pi
+LOG_HEARTBEAT_SEC = 1.0
+LOG_STATEMENT_EVERY = 1
+LOG_SNAPSHOT_SEC = 10.0
+LOG_SNAPSHOT_COUNT = 20
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -76,6 +82,67 @@ PENS = {
 # ------------------------------
 # Utility
 # ------------------------------
+def _select_log_path():
+    env_path = os.environ.get('MINI64_LOG_PATH')
+    if env_path:
+        return env_path
+    path = 'mini64.log'
+    try:
+        with open(path, 'a', encoding='utf-8'):
+            return path
+    except OSError:
+        return None
+
+class DebugLog:
+    def __init__(self):
+        self.path = _select_log_path()
+        self.file = None
+        self.recent_events = deque(maxlen=LOG_SNAPSHOT_COUNT)
+        if self.path:
+            self.file = open(self.path, 'a', encoding='utf-8', buffering=1)
+            self.write('=== MINI64 START ===')
+
+    def write(self, msg):
+        if not self.file:
+            return
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        self.file.write(f'{ts} | {msg}\n')
+        self.file.flush()
+
+    def event(self, msg):
+        self.recent_events.append(msg)
+        self.write(msg)
+
+    def close(self):
+        if self.file:
+            self.write('=== MINI64 STOP ===')
+            self.file.close()
+            self.file = None
+
+def _read_cpu_sample():
+    try:
+        with open('/proc/stat', 'r', encoding='utf-8') as f:
+            parts = f.readline().split()
+        if not parts or parts[0] != 'cpu':
+            return None
+        nums = [int(x) for x in parts[1:]]
+        idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+        total = sum(nums)
+        return (idle, total)
+    except OSError:
+        return None
+
+def _read_meminfo():
+    try:
+        info = {}
+        with open('/proc/meminfo', 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    info[parts[0].rstrip(':')] = int(parts[1])
+        return info
+    except OSError:
+        return {}
 
 def clamp(v, a, b):
     return max(a, min(b, v))
@@ -282,9 +349,10 @@ class Console:
 
 
 class MiniC64:
-    def __init__(self, surface, console):
+    def __init__(self, surface, console, logger=None):
         self.surf = surface
         self.console = console
+        self.logger = logger
         self.reset()
 
     # ----------------------
@@ -317,6 +385,11 @@ class MiniC64:
         # Emergency exit tracking
         self.emergency_exit_start = 0
         self.emergency_exit_active = False
+        self.last_pc = None
+        self.last_line = None
+        self.last_cmd = None
+        self.last_exec_time = None
+        self.statement_count = 0
 
     def enter_programming_mode(self):
         self.console.enter_prog_mode()
@@ -401,13 +474,27 @@ class MiniC64:
         rt = {
             'pc': 0
         }
-        while self.running and rt['pc'] < len(self.program):
-            ln, line = self.program[rt['pc']]
-            delta = self.exec_statement(self.tokenize(line), rt)
-            if delta is None:
-                rt['pc'] += 1
-            else:
-                rt['pc'] += delta
+        try:
+            while self.running and rt['pc'] < len(self.program):
+                ln, line = self.program[rt['pc']]
+                self.last_pc = rt['pc']
+                self.last_line = ln
+                self.last_exec_time = time.time()
+                toks = self.tokenize(line)
+                self.last_cmd = toks[0].upper() if toks else None
+                self.statement_count += 1
+                if self.logger and (self.statement_count % LOG_STATEMENT_EVERY == 0):
+                    self.logger.event(f'STMT pc={rt["pc"]} line={ln} cmd="{line}"')
+                delta = self.exec_statement(toks, rt)
+                if delta is None:
+                    rt['pc'] += 1
+                else:
+                    rt['pc'] += delta
+        except Exception:
+            if self.logger:
+                self.logger.write('EXCEPTION in run_program')
+                self.logger.write(traceback.format_exc().strip())
+            self.running = False
         self.console.print('READY.')
         self.running = False
 
@@ -680,13 +767,18 @@ class App:
         font_size = max(12, int(H * 0.025))  # ~2.5% of screen height
         self.font = pygame.font.SysFont('consolas', font_size)
         self.console = Console((0, 0, LEFT_W, H), self.font)
-        self.machine = MiniC64(self.screen, self.console)
+        self.logger = DebugLog()
+        self.machine = MiniC64(self.screen, self.console, self.logger)
         # --- editor state owned by App ---
         self.prog_lines = ['10 ']
         self.prog_cursor_line = 0
         self.prog_cursor_col = 3
         # keep interpreter pointing to the same list
         self.machine.prog_lines = self.prog_lines
+        self.last_event_time = time.time()
+        self.last_heartbeat = time.time()
+        self.last_snapshot = time.time()
+        self.cpu_sample = _read_cpu_sample()
 
     def enter_programming_mode(self):
         # Build an editable buffer from the current program and switch UI
@@ -705,16 +797,22 @@ class App:
         self.machine.exit_programming_mode()
 
     def process_line(self, line: str):
+        if self.logger:
+            self.logger.event(f'INPUT "{line}" mode={"EDIT" if self.console.prog_mode else "CONSOLE"}')
         self.machine.process_line(line)
         return
 
     def run_program(self):
+        if self.logger:
+            self.logger.write('RUN PROGRAM')
         self.machine.run_program()
 
     def run(self):
         self.console.print(' *** MINI 64 BASIC V2 ***')
         self.console.print(' 38911 BASIC BYTES FREE')
         self.console.print('READY.')
+        if self.logger:
+            self.logger.write('APP START')
         sep_x = LEFT_W
 
         while True:
@@ -723,12 +821,14 @@ class App:
             
             # Handle shutdown countdown
             if self.machine.shutting_down:
-                import time
                 remaining = self.machine.shutdown_time - time.time()
                 new_counter = max(0, int(remaining) + 1)
                 if new_counter != self.machine.shutdown_counter:
                     self.machine.shutdown_counter = new_counter
                 if remaining <= 0:
+                    if self.logger:
+                        self.logger.write('SHUTDOWN TIMER EXIT')
+                        self.logger.close()
                     pygame.quit()
                     sys.exit()
 
@@ -738,25 +838,35 @@ class App:
             
             if ctrl_shift_q:
                 if not self.machine.emergency_exit_active:
-                    import time
                     self.machine.emergency_exit_start = time.time()
                     self.machine.emergency_exit_active = True
                 elif time.time() - self.machine.emergency_exit_start >= 2.0:
                     # Force exit after 2 seconds
+                    if self.logger:
+                        self.logger.write('EMERGENCY EXIT')
+                        self.logger.close()
                     pygame.quit()
                     sys.exit()
             else:
                 self.machine.emergency_exit_active = False
 
             for ev in pygame.event.get():
+                self.last_event_time = time.time()
                 if ev.type == pygame.QUIT:
+                    if self.logger:
+                        self.logger.write('EVENT QUIT')
+                        self.logger.close()
                     pygame.quit(); sys.exit()
                 if ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_ESCAPE:
                         # toggle edit mode
                         if self.console.prog_mode:
+                            if self.logger:
+                                self.logger.write('TOGGLE EDIT -> CONSOLE')
                             self.exit_programming_mode()
                         else:
+                            if self.logger:
+                                self.logger.write('TOGGLE CONSOLE -> EDIT')
                             self.enter_programming_mode()
                         continue
                     self.console.handle_key(ev, self)
@@ -775,6 +885,53 @@ class App:
 
             pygame.display.flip()
             self.clock.tick(FPS)
+            now = time.time()
+            if self.logger and (now - self.last_heartbeat) >= LOG_HEARTBEAT_SEC:
+                self.last_heartbeat = now
+                load1 = None
+                if hasattr(os, 'getloadavg'):
+                    try:
+                        load1 = os.getloadavg()[0]
+                    except OSError:
+                        load1 = None
+                mem = _read_meminfo()
+                mem_total = mem.get('MemTotal')
+                mem_avail = mem.get('MemAvailable')
+                mem_used = None
+                if mem_total and mem_avail is not None:
+                    mem_used = mem_total - mem_avail
+                cpu_pct = None
+                new_sample = _read_cpu_sample()
+                if self.cpu_sample and new_sample:
+                    idle_delta = new_sample[0] - self.cpu_sample[0]
+                    total_delta = new_sample[1] - self.cpu_sample[1]
+                    if total_delta > 0:
+                        cpu_pct = 100.0 * (1.0 - (idle_delta / total_delta))
+                if new_sample:
+                    self.cpu_sample = new_sample
+                last_evt_age = now - self.last_event_time
+                self.logger.write(
+                    'HEARTBEAT mode={mode} running={running} pc={pc} line={line} cmd={cmd} '
+                    'fps={fps:.1f} last_event_age={evt:.2f}s load1={load} cpu={cpu} mem_used_kb={mem}'.format(
+                        mode='EDIT' if self.console.prog_mode else 'CONSOLE',
+                        running=self.machine.running,
+                        pc=self.machine.last_pc,
+                        line=self.machine.last_line,
+                        cmd=self.machine.last_cmd,
+                        fps=self.clock.get_fps(),
+                        evt=last_evt_age,
+                        load=f'{load1:.2f}' if load1 is not None else 'NA',
+                        cpu=f'{cpu_pct:.1f}%' if cpu_pct is not None else 'NA',
+                        mem=mem_used if mem_used is not None else 'NA',
+                    )
+                )
+            if self.logger and (now - self.last_snapshot) >= LOG_SNAPSHOT_SEC:
+                self.last_snapshot = now
+                if self.logger.recent_events:
+                    recent = ' | '.join(self.logger.recent_events)
+                else:
+                    recent = 'NA'
+                self.logger.write(f'SNAPSHOT recent="{recent}"')
 
 
 if __name__ == '__main__':

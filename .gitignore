@@ -1,5 +1,6 @@
 # BASIC program files created by Mini 64
 *.bas
+mini64.log
 
 # Python
 __pycache__/
