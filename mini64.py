@@ -18,6 +18,7 @@ import re
 import os
 import time
 import traceback
+import faulthandler
 from collections import deque
 
 # ------------------------------
@@ -39,6 +40,7 @@ LOG_HEARTBEAT_SEC = 1.0
 LOG_STATEMENT_EVERY = 1
 LOG_SNAPSHOT_SEC = 10.0
 LOG_SNAPSHOT_COUNT = 20
+LOG_WATCHDOG_SEC = 20.0
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -98,15 +100,22 @@ class DebugLog:
         self.path = _select_log_path()
         self.file = None
         self.recent_events = deque(maxlen=LOG_SNAPSHOT_COUNT)
+        self.boot_id = _read_boot_id()
         if self.path:
-            self.file = open(self.path, 'a', encoding='utf-8', buffering=1)
+            self.file = open(self.path, 'w', encoding='utf-8', buffering=1)
             self.write('=== MINI64 START ===')
+            if self.boot_id:
+                self.write(f'BOOT_ID {self.boot_id}')
 
     def write(self, msg):
         if not self.file:
             return
         ts = time.strftime('%Y-%m-%d %H:%M:%S')
-        self.file.write(f'{ts} | {msg}\n')
+        uptime = _read_uptime()
+        if uptime is None:
+            self.file.write(f'{ts} | {msg}\n')
+        else:
+            self.file.write(f'{ts} | up={uptime:.2f}s | {msg}\n')
         self.file.flush()
 
     def event(self, msg):
@@ -115,6 +124,10 @@ class DebugLog:
 
     def close(self):
         if self.file:
+            try:
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
             self.write('=== MINI64 STOP ===')
             self.file.close()
             self.file = None
@@ -143,6 +156,20 @@ def _read_meminfo():
         return info
     except OSError:
         return {}
+
+def _read_boot_id():
+    try:
+        with open('/proc/sys/kernel/random/boot_id', 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+def _read_uptime():
+    try:
+        with open('/proc/uptime', 'r', encoding='utf-8') as f:
+            return float(f.readline().split()[0])
+    except OSError:
+        return None
 
 def clamp(v, a, b):
     return max(a, min(b, v))
@@ -784,6 +811,10 @@ class App:
         self.font = pygame.font.SysFont('consolas', font_size)
         self.console = Console((0, 0, LEFT_W, H), self.font)
         self.logger = DebugLog()
+        if self.logger and self.logger.file:
+            faulthandler.enable(file=self.logger.file, all_threads=True)
+            if LOG_WATCHDOG_SEC > 0:
+                faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=True, file=self.logger.file)
         self.machine = MiniC64(self.screen, self.console, self.logger)
         # --- editor state owned by App ---
         self.prog_lines = ['10 ']
