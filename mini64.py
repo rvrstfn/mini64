@@ -44,7 +44,7 @@ LOG_SNAPSHOT_SEC = 10.0
 LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
 LOG_SLOW_FRAME_SEC = 0.5
-EVENT_STALL_EXIT_SEC = 30.0
+# EVENT_STALL_EXIT_SEC = 30.0
 IDLE_SLEEP_SEC = 0.02
 LOOP_STALL_SEC = 5.0
 
@@ -1065,11 +1065,11 @@ class App:
                     )
                 )
                 # If we have seen no events for a long time, assume input stack wedged and exit
-                if EVENT_STALL_EXIT_SEC and last_evt_age > EVENT_STALL_EXIT_SEC:
-                    self.logger.write(f'EVENT_STALL_EXIT age={last_evt_age:.2f}s -> quitting')
-                    self.logger.close()
-                    pygame.quit()
-                    sys.exit(1)
+                # if EVENT_STALL_EXIT_SEC and last_evt_age > EVENT_STALL_EXIT_SEC:
+                #     self.logger.write(f'EVENT_STALL_EXIT age={last_evt_age:.2f}s -> quitting')
+                #     self.logger.close()
+                #     pygame.quit()
+                #     sys.exit(1)
             if self.logger:
                 loop_end = now
                 pump_to_draw = draw_start - loop_start
