@@ -19,6 +19,7 @@ import os
 import time
 import traceback
 import faulthandler
+import threading
 from collections import deque
 
 # ------------------------------
@@ -42,6 +43,7 @@ LOG_SNAPSHOT_SEC = 10.0
 LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
 LOG_SLOW_FRAME_SEC = 0.5
+LOOP_STALL_SEC = 5.0
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -169,6 +171,31 @@ def _read_uptime():
     try:
         with open('/proc/uptime', 'r', encoding='utf-8') as f:
             return float(f.readline().split()[0])
+    except OSError:
+        return None
+
+def _read_cpu_temp_c():
+    try:
+        with open('/sys/class/thermal/thermal_zone0/temp', 'r', encoding='utf-8') as f:
+            return float(f.read().strip()) / 1000.0
+    except OSError:
+        return None
+
+def _read_cpu_freq_mhz():
+    try:
+        with open('/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq', 'r', encoding='utf-8') as f:
+            return float(f.read().strip()) / 1000.0
+    except OSError:
+        return None
+
+def _read_throttled():
+    path = '/sys/devices/platform/soc/soc:firmware/get_throttled'
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+        if raw.startswith('0x'):
+            return int(raw, 16)
+        return int(raw)
     except OSError:
         return None
 
@@ -812,6 +839,16 @@ class App:
         self.font = pygame.font.SysFont('consolas', font_size)
         self.console = Console((0, 0, LEFT_W, H), self.font)
         self.logger = DebugLog()
+        if self.logger:
+            try:
+                driver = pygame.display.get_driver()
+            except Exception:
+                driver = 'UNKNOWN'
+            info = pygame.display.Info()
+            self.logger.write(
+                f'PYGAME {pygame.ver} SDL {pygame.get_sdl_version()} DRIVER {driver} '
+                f'VIDEO {info.current_w}x{info.current_h}'
+            )
         if self.logger and self.logger.file:
             faulthandler.enable(file=self.logger.file, all_threads=True)
             if LOG_WATCHDOG_SEC > 0:
@@ -827,7 +864,31 @@ class App:
         self.last_heartbeat = time.time()
         self.last_snapshot = time.time()
         self.last_watchdog_arm = time.time()
+        self.last_loop_time = time.time()
+        self.stall_reported = False
         self.cpu_sample = _read_cpu_sample()
+        self._start_stall_watchdog()
+
+    def _start_stall_watchdog(self):
+        def _watch():
+            while True:
+                time.sleep(1.0)
+                if not self.logger or not self.logger.file:
+                    continue
+                age = time.time() - self.last_loop_time
+                if age >= LOOP_STALL_SEC:
+                    if not self.stall_reported:
+                        self.stall_reported = True
+                        self.logger.write(f'LOOP_STALL age={age:.2f}s')
+                        try:
+                            faulthandler.dump_traceback(file=self.logger.file, all_threads=True)
+                        except Exception:
+                            pass
+                else:
+                    self.stall_reported = False
+
+        thread = threading.Thread(target=_watch, daemon=True)
+        thread.start()
 
     def enter_programming_mode(self):
         # Build an editable buffer from the current program and switch UI
@@ -866,6 +927,7 @@ class App:
 
         while True:
             loop_start = time.time()
+            self.last_loop_time = loop_start
             # Pump events to prevent freezes on slow hardware
             pygame.event.pump()
             
@@ -941,6 +1003,7 @@ class App:
             flip_end = time.time()
             self.clock.tick(FPS)
             now = time.time()
+            self.last_loop_time = now
             if self.logger and LOG_WATCHDOG_SEC > 0:
                 try:
                     faulthandler.cancel_dump_traceback_later()
@@ -972,9 +1035,13 @@ class App:
                 if new_sample:
                     self.cpu_sample = new_sample
                 last_evt_age = now - self.last_event_time
+                cpu_temp = _read_cpu_temp_c()
+                cpu_freq = _read_cpu_freq_mhz()
+                throttled = _read_throttled()
                 self.logger.write(
                     'HEARTBEAT mode={mode} running={running} pc={pc} line={line} cmd={cmd} '
-                    'fps={fps:.1f} last_event_age={evt:.2f}s events={events} load1={load} cpu={cpu} mem_used_kb={mem}'.format(
+                    'fps={fps:.1f} last_event_age={evt:.2f}s events={events} load1={load} cpu={cpu} '
+                    'temp_c={temp} freq_mhz={freq} throttled={throt} mem_used_kb={mem}'.format(
                         mode='EDIT' if self.console.prog_mode else 'CONSOLE',
                         running=self.machine.running,
                         pc=self.machine.last_pc,
@@ -985,6 +1052,9 @@ class App:
                         events=event_count,
                         load=f'{load1:.2f}' if load1 is not None else 'NA',
                         cpu=f'{cpu_pct:.1f}%' if cpu_pct is not None else 'NA',
+                        temp=f'{cpu_temp:.1f}' if cpu_temp is not None else 'NA',
+                        freq=f'{cpu_freq:.0f}' if cpu_freq is not None else 'NA',
+                        throt=f'0x{throttled:x}' if throttled is not None else 'NA',
                         mem=mem_used if mem_used is not None else 'NA',
                     )
                 )
