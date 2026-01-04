@@ -37,7 +37,7 @@ H = max(600, int(SCREEN_H * 0.9))
 # Console pane takes 33% of width
 LEFT_W = int(W * 0.33)
 # Lower FPS to reduce CPU/GPU load on low-power devices (e.g., Pi Zero 2 W)
-FPS = 10
+FPS = 8
 LOG_HEARTBEAT_SEC = 1.0
 LOG_STATEMENT_EVERY = 1
 LOG_SNAPSHOT_SEC = 10.0
@@ -45,7 +45,7 @@ LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
 LOG_SLOW_FRAME_SEC = 0.5
 EVENT_STALL_EXIT_SEC = 30.0
-IDLE_SLEEP_SEC = 0.01
+IDLE_SLEEP_SEC = 0.02
 LOOP_STALL_SEC = 5.0
 
 C64 = {
