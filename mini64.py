@@ -47,6 +47,7 @@ LOG_SLOW_FRAME_SEC = 0.5
 # EVENT_STALL_EXIT_SEC = 30.0
 IDLE_SLEEP_SEC = 0.02
 LOOP_STALL_SEC = 5.0
+EVENT_WAIT_MS = 100
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -857,6 +858,9 @@ class App:
             if LOG_WATCHDOG_SEC > 0:
                 faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=False, file=self.logger.file)
         self.machine = MiniC64(self.screen, self.console, self.logger)
+        self.blink_event = pygame.USEREVENT + 1
+        pygame.time.set_timer(self.blink_event, 250)
+        self.needs_redraw = True
         # --- editor state owned by App ---
         self.prog_lines = ['10 ']
         self.prog_cursor_line = 0
@@ -931,8 +935,11 @@ class App:
         while True:
             loop_start = time.time()
             self.last_loop_time = loop_start
-            # Pump events to prevent freezes on slow hardware
-            pygame.event.pump()
+            ev = pygame.event.wait(EVENT_WAIT_MS)
+            events = []
+            if ev is not None:
+                events.append(ev)
+            events.extend(pygame.event.get())
             
             # Handle shutdown countdown
             if self.machine.shutting_down:
@@ -940,6 +947,7 @@ class App:
                 new_counter = max(0, int(remaining) + 1)
                 if new_counter != self.machine.shutdown_counter:
                     self.machine.shutdown_counter = new_counter
+                    self.needs_redraw = True
                 if remaining <= 0:
                     if self.logger:
                         self.logger.write('SHUTDOWN TIMER EXIT')
@@ -966,7 +974,9 @@ class App:
                 self.machine.emergency_exit_active = False
 
             event_count = 0
-            for ev in pygame.event.get():
+            for ev in events:
+                if ev.type == pygame.NOEVENT:
+                    continue
                 event_count += 1
                 self.last_event_time = time.time()
                 if ev.type == pygame.QUIT:
@@ -974,6 +984,9 @@ class App:
                         self.logger.write('EVENT QUIT')
                         self.logger.close()
                     pygame.quit(); sys.exit()
+                if ev.type == self.blink_event:
+                    self.needs_redraw = True
+                    continue
                 if ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_ESCAPE:
                         # toggle edit mode
@@ -985,29 +998,41 @@ class App:
                             if self.logger:
                                 self.logger.write('TOGGLE CONSOLE -> EDIT')
                             self.enter_programming_mode()
+                        self.needs_redraw = True
                         continue
                     self.console.handle_key(ev, self)
+                    self.needs_redraw = True
 
             if IDLE_SLEEP_SEC and event_count == 0 and not self.machine.running and not self.machine.shutting_down:
                 time.sleep(IDLE_SLEEP_SEC)
 
-            draw_start = time.time()
-            self.screen.fill(C64['bg'])
+            if self.machine.running:
+                self.needs_redraw = True
 
-            # left pane
-            self.console.draw(self.screen, self)
+            did_redraw = False
+            draw_start = loop_start
+            flip_start = loop_start
+            flip_end = loop_start
+            if self.needs_redraw:
+                did_redraw = True
+                draw_start = time.time()
+                self.screen.fill(C64['bg'])
 
-            # right pane border
-            pygame.draw.line(self.screen, (10, 10, 10), (sep_x, 0), (sep_x, H), 3)
-            # blit gfx
-            self.screen.blit(self.machine.gfx, (sep_x, 0))
-            # draw turtle cursor
-            self.machine.draw_turtle(self.screen, sep_x)
+                # left pane
+                self.console.draw(self.screen, self)
 
-            flip_start = time.time()
-            pygame.display.flip()
-            flip_end = time.time()
-            self.clock.tick(FPS)
+                # right pane border
+                pygame.draw.line(self.screen, (10, 10, 10), (sep_x, 0), (sep_x, H), 3)
+                # blit gfx
+                self.screen.blit(self.machine.gfx, (sep_x, 0))
+                # draw turtle cursor
+                self.machine.draw_turtle(self.screen, sep_x)
+
+                flip_start = time.time()
+                pygame.display.flip()
+                flip_end = time.time()
+                self.clock.tick(FPS)
+                self.needs_redraw = False
             now = time.time()
             self.last_loop_time = now
             if self.logger and LOG_WATCHDOG_SEC > 0:
