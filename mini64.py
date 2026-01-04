@@ -41,6 +41,7 @@ LOG_STATEMENT_EVERY = 1
 LOG_SNAPSHOT_SEC = 10.0
 LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
+LOG_SLOW_FRAME_SEC = 0.5
 
 C64 = {
     'bg': (24, 24, 70),       # deep blue
@@ -814,7 +815,7 @@ class App:
         if self.logger and self.logger.file:
             faulthandler.enable(file=self.logger.file, all_threads=True)
             if LOG_WATCHDOG_SEC > 0:
-                faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=True, file=self.logger.file)
+                faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=False, file=self.logger.file)
         self.machine = MiniC64(self.screen, self.console, self.logger)
         # --- editor state owned by App ---
         self.prog_lines = ['10 ']
@@ -825,6 +826,7 @@ class App:
         self.last_event_time = time.time()
         self.last_heartbeat = time.time()
         self.last_snapshot = time.time()
+        self.last_watchdog_arm = time.time()
         self.cpu_sample = _read_cpu_sample()
 
     def enter_programming_mode(self):
@@ -863,6 +865,7 @@ class App:
         sep_x = LEFT_W
 
         while True:
+            loop_start = time.time()
             # Pump events to prevent freezes on slow hardware
             pygame.event.pump()
             
@@ -897,7 +900,9 @@ class App:
             else:
                 self.machine.emergency_exit_active = False
 
+            event_count = 0
             for ev in pygame.event.get():
+                event_count += 1
                 self.last_event_time = time.time()
                 if ev.type == pygame.QUIT:
                     if self.logger:
@@ -918,6 +923,7 @@ class App:
                         continue
                     self.console.handle_key(ev, self)
 
+            draw_start = time.time()
             self.screen.fill(C64['bg'])
 
             # left pane
@@ -930,9 +936,18 @@ class App:
             # draw turtle cursor
             self.machine.draw_turtle(self.screen, sep_x)
 
+            flip_start = time.time()
             pygame.display.flip()
+            flip_end = time.time()
             self.clock.tick(FPS)
             now = time.time()
+            if self.logger and LOG_WATCHDOG_SEC > 0:
+                try:
+                    faulthandler.cancel_dump_traceback_later()
+                except Exception:
+                    pass
+                faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=False, file=self.logger.file)
+                self.last_watchdog_arm = now
             if self.logger and (now - self.last_heartbeat) >= LOG_HEARTBEAT_SEC:
                 self.last_heartbeat = now
                 load1 = None
@@ -959,7 +974,7 @@ class App:
                 last_evt_age = now - self.last_event_time
                 self.logger.write(
                     'HEARTBEAT mode={mode} running={running} pc={pc} line={line} cmd={cmd} '
-                    'fps={fps:.1f} last_event_age={evt:.2f}s load1={load} cpu={cpu} mem_used_kb={mem}'.format(
+                    'fps={fps:.1f} last_event_age={evt:.2f}s events={events} load1={load} cpu={cpu} mem_used_kb={mem}'.format(
                         mode='EDIT' if self.console.prog_mode else 'CONSOLE',
                         running=self.machine.running,
                         pc=self.machine.last_pc,
@@ -967,11 +982,27 @@ class App:
                         cmd=self.machine.last_cmd,
                         fps=self.clock.get_fps(),
                         evt=last_evt_age,
+                        events=event_count,
                         load=f'{load1:.2f}' if load1 is not None else 'NA',
                         cpu=f'{cpu_pct:.1f}%' if cpu_pct is not None else 'NA',
                         mem=mem_used if mem_used is not None else 'NA',
                     )
                 )
+            if self.logger:
+                loop_end = now
+                pump_to_draw = draw_start - loop_start
+                draw_to_flip = flip_start - draw_start
+                flip_time = flip_end - flip_start
+                loop_time = loop_end - loop_start
+                if loop_time >= LOG_SLOW_FRAME_SEC:
+                    self.logger.write(
+                        'SLOW_FRAME total={total:.3f}s pump={pump:.3f}s draw={draw:.3f}s flip={flip:.3f}s'.format(
+                            total=loop_time,
+                            pump=pump_to_draw,
+                            draw=draw_to_flip,
+                            flip=flip_time,
+                        )
+                    )
             if self.logger and (now - self.last_snapshot) >= LOG_SNAPSHOT_SEC:
                 self.last_snapshot = now
                 if self.logger.recent_events:
