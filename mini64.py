@@ -45,6 +45,7 @@ LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
 LOG_SLOW_FRAME_SEC = 0.5
 EVENT_STALL_EXIT_SEC = 30.0
+IDLE_SLEEP_SEC = 0.01
 LOOP_STALL_SEC = 5.0
 
 C64 = {
@@ -986,6 +987,9 @@ class App:
                             self.enter_programming_mode()
                         continue
                     self.console.handle_key(ev, self)
+
+            if IDLE_SLEEP_SEC and event_count == 0 and not self.machine.running and not self.machine.shutting_down:
+                time.sleep(IDLE_SLEEP_SEC)
 
             draw_start = time.time()
             self.screen.fill(C64['bg'])
