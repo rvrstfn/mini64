@@ -36,13 +36,15 @@ H = max(600, int(SCREEN_H * 0.9))
 
 # Console pane takes 33% of width
 LEFT_W = int(W * 0.33)
-FPS = 15  # Lower FPS for better stability on all hardware including Raspberry Pi
+# Lower FPS to reduce CPU/GPU load on low-power devices (e.g., Pi Zero 2 W)
+FPS = 10
 LOG_HEARTBEAT_SEC = 1.0
 LOG_STATEMENT_EVERY = 1
 LOG_SNAPSHOT_SEC = 10.0
 LOG_SNAPSHOT_COUNT = 20
 LOG_WATCHDOG_SEC = 20.0
 LOG_SLOW_FRAME_SEC = 0.5
+EVENT_STALL_EXIT_SEC = 30.0
 LOOP_STALL_SEC = 5.0
 
 C64 = {
@@ -1058,6 +1060,12 @@ class App:
                         mem=mem_used if mem_used is not None else 'NA',
                     )
                 )
+                # If we have seen no events for a long time, assume input stack wedged and exit
+                if EVENT_STALL_EXIT_SEC and last_evt_age > EVENT_STALL_EXIT_SEC:
+                    self.logger.write(f'EVENT_STALL_EXIT age={last_evt_age:.2f}s -> quitting')
+                    self.logger.close()
+                    pygame.quit()
+                    sys.exit(1)
             if self.logger:
                 loop_end = now
                 pump_to_draw = draw_start - loop_start
