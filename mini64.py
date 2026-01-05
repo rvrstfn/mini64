@@ -11,24 +11,73 @@
 #
 # If anything goes weird on paste, ping me and I will trim/fold as needed.
 
+import os
+BACKEND = os.environ.get('MINI64_BACKEND', 'pygame').lower()
+if BACKEND == 'fb':
+    os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
+    os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
+
 import pygame
 import sys
 import math
 import re
-import os
 import time
 import traceback
 import faulthandler
 import threading
+import mmap
+import select
+try:
+    import evdev
+    from evdev import ecodes
+except Exception:
+    evdev = None
+    ecodes = None
 from collections import deque
 
 # ------------------------------
 # Config / Palette
 # ------------------------------
+def _read_sysfs_int(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return int(f.read().strip())
+    except OSError:
+        return None
+
+def _read_sysfs_pair(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+        if ',' in raw:
+            a, b = raw.split(',', 1)
+            return int(a), int(b)
+    except OSError:
+        return None
+    return None
+
+def _get_fb_config():
+    fbdev = os.environ.get('MINI64_FBDEV', '/dev/fb0')
+    size = _read_sysfs_pair('/sys/class/graphics/fb0/virtual_size')
+    bpp = _read_sysfs_int('/sys/class/graphics/fb0/bits_per_pixel')
+    stride = _read_sysfs_int('/sys/class/graphics/fb0/stride')
+    if stride is None:
+        stride = _read_sysfs_int('/sys/class/graphics/fb0/line_length')
+    if size and bpp:
+        width, height = size
+        if stride is None:
+            stride = width * (bpp // 8)
+        return fbdev, width, height, bpp, stride
+    return fbdev, None, None, None, None
+
 # Auto-detect screen resolution and set proportional dimensions
 pygame.init()  # Need to init pygame first to get display info
-display_info = pygame.display.get_desktop_sizes()[0]
-SCREEN_W, SCREEN_H = display_info
+FB_DEV, FB_W, FB_H, FB_BPP, FB_STRIDE = _get_fb_config()
+if BACKEND == 'fb' and FB_W and FB_H:
+    SCREEN_W, SCREEN_H = FB_W, FB_H
+else:
+    display_info = pygame.display.get_desktop_sizes()[0]
+    SCREEN_W, SCREEN_H = display_info
 
 # Use 90% of screen size with reasonable minimums
 W = max(800, int(SCREEN_W * 0.9))
@@ -203,6 +252,154 @@ def _read_throttled():
     except OSError:
         return None
 
+class Framebuffer:
+    def __init__(self, dev, width, height, bpp, stride, logger=None):
+        self.dev = dev
+        self.width = width
+        self.height = height
+        self.bpp = bpp
+        self.stride = stride
+        self.logger = logger
+        if self.bpp != 32:
+            raise RuntimeError(f'Unsupported framebuffer bpp: {self.bpp}')
+        self.fd = open(self.dev, 'r+b', buffering=0)
+        self.mmap = mmap.mmap(self.fd.fileno(), self.stride * self.height, mmap.MAP_SHARED, mmap.PROT_WRITE)
+
+    def blit_surface(self, surface):
+        # Convert to RGBX (32bpp) and write line-by-line
+        raw = pygame.image.tostring(surface, 'RGBX')
+        row_bytes = self.width * 4
+        for y in range(self.height):
+            start = y * row_bytes
+            end = start + row_bytes
+            dst = y * self.stride
+            self.mmap[dst:dst + row_bytes] = raw[start:end]
+
+    def close(self):
+        try:
+            self.mmap.close()
+        except Exception:
+            pass
+        try:
+            self.fd.close()
+        except Exception:
+            pass
+
+class KeyEvent:
+    def __init__(self, key, unicode='', ctrl=False):
+        self.type = pygame.KEYDOWN
+        self.key = key
+        self.unicode = unicode
+        self.ctrl = ctrl
+
+class EvdevInput:
+    def __init__(self, logger=None):
+        self.logger = logger
+        if evdev is None:
+            raise RuntimeError('python-evdev not available')
+        devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+        keyboards = []
+        for dev in devices:
+            caps = dev.capabilities().get(ecodes.EV_KEY, [])
+            if ecodes.KEY_A in caps and ecodes.KEY_Z in caps:
+                keyboards.append(dev)
+        if not keyboards:
+            raise RuntimeError('No keyboard devices found')
+        self.device = keyboards[0]
+        self.device.grab()
+        self.shift = False
+        self.ctrl = False
+
+    def _char_from_code(self, code):
+        if ecodes is None:
+            return ''
+        if ecodes.KEY_A <= code <= ecodes.KEY_Z:
+            ch = chr(ord('a') + (code - ecodes.KEY_A))
+            return ch.upper() if self.shift else ch
+        if ecodes.KEY_1 <= code <= ecodes.KEY_9:
+            ch = str(code - ecodes.KEY_1 + 1)
+            if self.shift:
+                return {'1': '!', '2': '@', '3': '#', '4': '$', '5': '%', '6': '^', '7': '&', '8': '*', '9': '('}.get(ch, ch)
+            return ch
+        if code == ecodes.KEY_0:
+            return ')' if self.shift else '0'
+        mapping = {
+            ecodes.KEY_SPACE: ' ',
+            ecodes.KEY_MINUS: '_' if self.shift else '-',
+            ecodes.KEY_EQUAL: '+' if self.shift else '=',
+            ecodes.KEY_LEFTBRACE: '{' if self.shift else '[',
+            ecodes.KEY_RIGHTBRACE: '}' if self.shift else ']',
+            ecodes.KEY_BACKSLASH: '|' if self.shift else '\\',
+            ecodes.KEY_SEMICOLON: ':' if self.shift else ';',
+            ecodes.KEY_APOSTROPHE: '"' if self.shift else '\'',
+            ecodes.KEY_COMMA: '<' if self.shift else ',',
+            ecodes.KEY_DOT: '>' if self.shift else '.',
+            ecodes.KEY_SLASH: '?' if self.shift else '/',
+            ecodes.KEY_GRAVE: '~' if self.shift else '`',
+        }
+        return mapping.get(code, '')
+
+    def poll(self, timeout_ms):
+        rlist, _, _ = select.select([self.device.fd], [], [], timeout_ms / 1000.0)
+        events = []
+        if not rlist:
+            return events
+        for ev in self.device.read():
+            if ev.type != ecodes.EV_KEY:
+                continue
+            key_event = evdev.categorize(ev)
+            if key_event.keystate == key_event.key_down or key_event.keystate == key_event.key_hold:
+                code = key_event.scancode
+                if code in (ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT):
+                    self.shift = True
+                    continue
+                if code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                    self.ctrl = True
+                    continue
+                if code == ecodes.KEY_ENTER:
+                    events.append(KeyEvent(pygame.K_RETURN, '\n', self.ctrl))
+                    continue
+                if code == ecodes.KEY_BACKSPACE:
+                    events.append(KeyEvent(pygame.K_BACKSPACE, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_DELETE:
+                    events.append(KeyEvent(pygame.K_DELETE, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_ESC:
+                    events.append(KeyEvent(pygame.K_ESCAPE, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_UP:
+                    events.append(KeyEvent(pygame.K_UP, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_DOWN:
+                    events.append(KeyEvent(pygame.K_DOWN, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_LEFT:
+                    events.append(KeyEvent(pygame.K_LEFT, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_RIGHT:
+                    events.append(KeyEvent(pygame.K_RIGHT, '', self.ctrl))
+                    continue
+                if code == ecodes.KEY_F5:
+                    events.append(KeyEvent(pygame.K_F5, '', self.ctrl))
+                    continue
+                ch = self._char_from_code(code)
+                if ch:
+                    events.append(KeyEvent(0, ch, self.ctrl))
+            elif key_event.keystate == key_event.key_up:
+                code = key_event.scancode
+                if code in (ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT):
+                    self.shift = False
+                if code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                    self.ctrl = False
+        return events
+
+    def close(self):
+        try:
+            self.device.ungrab()
+        except Exception:
+            pass
+
 def clamp(v, a, b):
     return max(a, min(b, v))
 
@@ -327,7 +524,8 @@ class Console:
             app.exit_programming_mode()
             return
         # shortcuts first: Ctrl+Enter or F5 -> commit & run
-        if (ev.key == pygame.K_RETURN and (pygame.key.get_mods() & pygame.KMOD_CTRL)) or ev.key == pygame.K_F5:
+        ctrl_pressed = getattr(ev, 'ctrl', False)
+        if (ev.key == pygame.K_RETURN and (ctrl_pressed or (pygame.key.get_mods() & pygame.KMOD_CTRL))) or ev.key == pygame.K_F5:
             app.exit_programming_mode()
             app.run_program()
             return
@@ -835,8 +1033,15 @@ class MiniC64:
 class App:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((W, H))
-        pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
+        if BACKEND == 'fb':
+            if not (FB_W and FB_H and FB_BPP):
+                raise RuntimeError('Framebuffer config not available')
+            self.screen = pygame.Surface((W, H))
+            self.fb = Framebuffer(FB_DEV, W, H, FB_BPP, FB_STRIDE)
+            self.input = EvdevInput()
+        else:
+            self.screen = pygame.display.set_mode((W, H))
+            pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
         self.clock = pygame.time.Clock()
         # Scale font size based on screen resolution
         font_size = max(12, int(H * 0.025))  # ~2.5% of screen height
@@ -848,10 +1053,14 @@ class App:
                 driver = pygame.display.get_driver()
             except Exception:
                 driver = 'UNKNOWN'
-            info = pygame.display.Info()
+            try:
+                info = pygame.display.Info()
+                video = f'{info.current_w}x{info.current_h}'
+            except Exception:
+                video = f'{W}x{H}'
             self.logger.write(
                 f'PYGAME {pygame.ver} SDL {pygame.get_sdl_version()} DRIVER {driver} '
-                f'VIDEO {info.current_w}x{info.current_h}'
+                f'VIDEO {video} BACKEND {BACKEND}'
             )
         if self.logger and self.logger.file:
             faulthandler.enable(file=self.logger.file, all_threads=True)
@@ -859,7 +1068,9 @@ class App:
                 faulthandler.dump_traceback_later(LOG_WATCHDOG_SEC, repeat=False, file=self.logger.file)
         self.machine = MiniC64(self.screen, self.console, self.logger)
         self.blink_event = pygame.USEREVENT + 1
-        pygame.time.set_timer(self.blink_event, 250)
+        self.next_blink_time = time.time() + 0.25
+        if BACKEND != 'fb':
+            pygame.time.set_timer(self.blink_event, 250)
         self.needs_redraw = True
         # --- editor state owned by App ---
         self.prog_lines = ['10 ']
@@ -875,6 +1086,17 @@ class App:
         self.stall_reported = False
         self.cpu_sample = _read_cpu_sample()
         self._start_stall_watchdog()
+
+    def _cleanup(self):
+        if BACKEND == 'fb':
+            try:
+                self.input.close()
+            except Exception:
+                pass
+            try:
+                self.fb.close()
+            except Exception:
+                pass
 
     def _start_stall_watchdog(self):
         def _watch():
@@ -935,11 +1157,18 @@ class App:
         while True:
             loop_start = time.time()
             self.last_loop_time = loop_start
-            ev = pygame.event.wait(EVENT_WAIT_MS)
             events = []
-            if ev is not None:
-                events.append(ev)
-            events.extend(pygame.event.get())
+            if BACKEND == 'fb':
+                events = self.input.poll(EVENT_WAIT_MS)
+                now = time.time()
+                if now >= self.next_blink_time:
+                    self.needs_redraw = True
+                    self.next_blink_time = now + 0.25
+            else:
+                ev = pygame.event.wait(EVENT_WAIT_MS)
+                if ev is not None:
+                    events.append(ev)
+                events.extend(pygame.event.get())
             
             # Handle shutdown countdown
             if self.machine.shutting_down:
@@ -952,6 +1181,7 @@ class App:
                     if self.logger:
                         self.logger.write('SHUTDOWN TIMER EXIT')
                         self.logger.close()
+                    self._cleanup()
                     pygame.quit()
                     sys.exit()
 
@@ -968,6 +1198,7 @@ class App:
                     if self.logger:
                         self.logger.write('EMERGENCY EXIT')
                         self.logger.close()
+                    self._cleanup()
                     pygame.quit()
                     sys.exit()
             else:
@@ -983,6 +1214,7 @@ class App:
                     if self.logger:
                         self.logger.write('EVENT QUIT')
                         self.logger.close()
+                    self._cleanup()
                     pygame.quit(); sys.exit()
                 if ev.type == self.blink_event:
                     self.needs_redraw = True
@@ -1029,8 +1261,12 @@ class App:
                 self.machine.draw_turtle(self.screen, sep_x)
 
                 flip_start = time.time()
-                pygame.display.flip()
-                flip_end = time.time()
+                if BACKEND == 'fb':
+                    self.fb.blit_surface(self.screen)
+                    flip_end = time.time()
+                else:
+                    pygame.display.flip()
+                    flip_end = time.time()
                 self.clock.tick(FPS)
                 self.needs_redraw = False
             now = time.time()
