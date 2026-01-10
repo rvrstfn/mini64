@@ -20,5 +20,14 @@ fi
 LOG_FILE="$REPO_DIR/mini64_x.log"
 : > "$LOG_FILE"
 
-exec startx /usr/bin/python "$REPO_DIR/mini64.py" -- :0 \
+PYTHON_BIN="python"
+if [ -n "$VENV_DIR" ]; then
+  PYTHON_BIN="$REPO_DIR/$VENV_DIR/bin/python"
+fi
+
+if ! "$PYTHON_BIN" -c "import pygame" >/dev/null 2>&1; then
+  "$PYTHON_BIN" -m pip install pygame >>"$LOG_FILE" 2>&1
+fi
+
+exec startx "$PYTHON_BIN" "$REPO_DIR/mini64.py" -- :0 \
   >>"$LOG_FILE" 2>&1
