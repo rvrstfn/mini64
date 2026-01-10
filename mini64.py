@@ -260,20 +260,41 @@ class Framebuffer:
         self.bpp = bpp
         self.stride = stride
         self.logger = logger
-        if self.bpp != 32:
+        if self.bpp not in (16, 32):
             raise RuntimeError(f'Unsupported framebuffer bpp: {self.bpp}')
         self.fd = open(self.dev, 'r+b', buffering=0)
         self.mmap = mmap.mmap(self.fd.fileno(), self.stride * self.height, mmap.MAP_SHARED, mmap.PROT_WRITE)
 
     def blit_surface(self, surface):
-        # Convert to RGBX (32bpp) and write line-by-line
-        raw = pygame.image.tostring(surface, 'RGBX')
-        row_bytes = self.width * 4
+        if self.bpp == 32:
+            # Convert to RGBX (32bpp) and write line-by-line
+            raw = pygame.image.tostring(surface, 'RGBX')
+            row_bytes = self.width * 4
+            for y in range(self.height):
+                start = y * row_bytes
+                end = start + row_bytes
+                dst = y * self.stride
+                self.mmap[dst:dst + row_bytes] = raw[start:end]
+            return
+
+        # 16bpp RGB565
+        raw = pygame.image.tostring(surface, 'RGB')
+        src_row_bytes = self.width * 3
+        dst_row_bytes = self.width * 2
         for y in range(self.height):
-            start = y * row_bytes
-            end = start + row_bytes
+            src = raw[y * src_row_bytes:(y + 1) * src_row_bytes]
+            row = bytearray(dst_row_bytes)
+            for x in range(self.width):
+                i = x * 3
+                r = src[i] >> 3
+                g = src[i + 1] >> 2
+                b = src[i + 2] >> 3
+                val = (r << 11) | (g << 5) | b
+                j = x * 2
+                row[j] = val & 0xFF
+                row[j + 1] = (val >> 8) & 0xFF
             dst = y * self.stride
-            self.mmap[dst:dst + row_bytes] = raw[start:end]
+            self.mmap[dst:dst + dst_row_bytes] = row
 
     def close(self):
         try:
