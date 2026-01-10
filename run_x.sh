@@ -10,4 +10,8 @@ if [ -f ".venv/bin/activate" ]; then
   . ".venv/bin/activate"
 fi
 
-exec startx /usr/bin/python "$REPO_DIR/mini64.py" -- :0
+LOG_FILE="$REPO_DIR/mini64_x.log"
+: > "$LOG_FILE"
+
+exec startx /usr/bin/python "$REPO_DIR/mini64.py" -- :0 \
+  >>"$LOG_FILE" 2>&1
