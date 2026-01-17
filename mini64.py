@@ -935,11 +935,7 @@ class App:
         while True:
             loop_start = time.time()
             self.last_loop_time = loop_start
-            ev = pygame.event.wait(EVENT_WAIT_MS)
-            events = []
-            if ev is not None:
-                events.append(ev)
-            events.extend(pygame.event.get())
+            events = pygame.event.get()
             
             # Handle shutdown countdown
             if self.machine.shutting_down:
@@ -975,8 +971,6 @@ class App:
 
             event_count = 0
             for ev in events:
-                if ev.type == pygame.NOEVENT:
-                    continue
                 event_count += 1
                 self.last_event_time = time.time()
                 if ev.type == pygame.QUIT:
@@ -1003,9 +997,6 @@ class App:
                     self.console.handle_key(ev, self)
                     self.needs_redraw = True
 
-            if IDLE_SLEEP_SEC and event_count == 0 and not self.machine.running and not self.machine.shutting_down:
-                time.sleep(IDLE_SLEEP_SEC)
-
             if self.machine.running:
                 self.needs_redraw = True
 
@@ -1031,7 +1022,6 @@ class App:
                 flip_start = time.time()
                 pygame.display.flip()
                 flip_end = time.time()
-                self.clock.tick(FPS)
                 self.needs_redraw = False
             now = time.time()
             self.last_loop_time = now
@@ -1117,6 +1107,7 @@ class App:
                 else:
                     recent = 'NA'
                 self.logger.write(f'SNAPSHOT recent="{recent}"')
+            self.clock.tick(FPS)
 
 
 if __name__ == '__main__':
