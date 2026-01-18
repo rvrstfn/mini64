@@ -574,6 +574,8 @@ class MiniC64:
             'PENDOWN': 'PD',
             'CI': 'CIRCLE',
             'CIR': 'CIRCLE',
+            'SQ': 'SQUARE',
+            'TRI': 'TRIANGLE',
         }
         cmd = aliases.get(cmd, cmd)
 
@@ -721,6 +723,34 @@ class MiniC64:
         if cmd == 'CIRCLE':
             r = int(float(self.num_or_var(args[0])))
             pygame.draw.circle(self.gfx, self.color, (int(self.x), int(self.y)), r, max(1, self.thick))
+            return None
+        if cmd == 'SQUARE':
+            if not args:
+                self.console.print('?SYNTAX ERROR')
+                self.running = False
+                return None
+            d = float(self.num_or_var(args[0]))
+            for _ in range(4):
+                x2 = self.x + math.cos(math.radians(self.heading)) * d
+                y2 = self.y + math.sin(math.radians(self.heading)) * d
+                if self.pen_down:
+                    pygame.draw.line(self.gfx, self.color, (self.x, self.y), (x2, y2), self.thick)
+                self.x, self.y = x2, y2
+                self.heading = (self.heading + 90) % 360
+            return None
+        if cmd == 'TRIANGLE':
+            if not args:
+                self.console.print('?SYNTAX ERROR')
+                self.running = False
+                return None
+            d = float(self.num_or_var(args[0]))
+            for _ in range(3):
+                x2 = self.x + math.cos(math.radians(self.heading)) * d
+                y2 = self.y + math.sin(math.radians(self.heading)) * d
+                if self.pen_down:
+                    pygame.draw.line(self.gfx, self.color, (self.x, self.y), (x2, y2), self.thick)
+                self.x, self.y = x2, y2
+                self.heading = (self.heading + 120) % 360
             return None
 
         # --- storage ---
