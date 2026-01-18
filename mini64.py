@@ -722,11 +722,15 @@ class MiniC64:
             self.x, self.y = nx, ny
             return None
         if cmd == 'CIRCLE':
+            if not self.pen_down:
+                return None
             d = float(self.num_or_var(args[0]))
             r = int(d / 2.0)
             pygame.draw.circle(self.gfx, self.color, (int(self.x), int(self.y)), r, max(1, self.thick))
             return None
         if cmd == 'RADIUS':
+            if not self.pen_down:
+                return None
             r = int(float(self.num_or_var(args[0])))
             pygame.draw.circle(self.gfx, self.color, (int(self.x), int(self.y)), r, max(1, self.thick))
             return None
@@ -891,6 +895,7 @@ class App:
         pygame.init()
         self.screen = pygame.display.set_mode((W, H))
         pygame.display.set_caption('*** MINI 64 BASIC V2 ***')
+        pygame.mouse.set_visible(False)
         self.clock = pygame.time.Clock()
         # Scale font size based on screen resolution
         font_size = max(12, int(H * 0.025))  # ~2.5% of screen height
