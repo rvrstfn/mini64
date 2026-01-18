@@ -766,10 +766,11 @@ class MiniC64:
             angle = math.radians(self.heading)
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
+            # Point the top vertex along the turtle heading
             base = [
-                (0.0, 2.0 * h / 3.0),
-                (-d / 2.0, -h / 3.0),
-                (d / 2.0, -h / 3.0),
+                (2.0 * h / 3.0, 0.0),
+                (-h / 3.0, -d / 2.0),
+                (-h / 3.0, d / 2.0),
             ]
             pts = []
             for x, y in base:
