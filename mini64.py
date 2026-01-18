@@ -572,6 +572,8 @@ class MiniC64:
             'GO': 'GO',
             'PENUP': 'PU',
             'PENDOWN': 'PD',
+            'CI': 'CIRCLE',
+            'CIR': 'CIRCLE',
         }
         cmd = aliases.get(cmd, cmd)
 
