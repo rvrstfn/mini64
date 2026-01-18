@@ -576,6 +576,7 @@ class MiniC64:
             'CIR': 'CIRCLE',
             'SQ': 'SQUARE',
             'TRI': 'TRIANGLE',
+            'RAD': 'RADIUS',
         }
         cmd = aliases.get(cmd, cmd)
 
@@ -721,6 +722,11 @@ class MiniC64:
             self.x, self.y = nx, ny
             return None
         if cmd == 'CIRCLE':
+            d = float(self.num_or_var(args[0]))
+            r = int(d / 2.0)
+            pygame.draw.circle(self.gfx, self.color, (int(self.x), int(self.y)), r, max(1, self.thick))
+            return None
+        if cmd == 'RADIUS':
             r = int(float(self.num_or_var(args[0])))
             pygame.draw.circle(self.gfx, self.color, (int(self.x), int(self.y)), r, max(1, self.thick))
             return None
@@ -729,28 +735,44 @@ class MiniC64:
                 self.console.print('?SYNTAX ERROR')
                 self.running = False
                 return None
+            if not self.pen_down:
+                return None
             d = float(self.num_or_var(args[0]))
-            for _ in range(4):
-                x2 = self.x + math.cos(math.radians(self.heading)) * d
-                y2 = self.y + math.sin(math.radians(self.heading)) * d
-                if self.pen_down:
-                    pygame.draw.line(self.gfx, self.color, (self.x, self.y), (x2, y2), self.thick)
-                self.x, self.y = x2, y2
-                self.heading = (self.heading + 90) % 360
+            half = d / 2.0
+            angle = math.radians(self.heading)
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            base = [(-half, -half), (half, -half), (half, half), (-half, half)]
+            pts = []
+            for x, y in base:
+                rx = x * cos_a - y * sin_a
+                ry = x * sin_a + y * cos_a
+                pts.append((self.x + rx, self.y + ry))
+            pygame.draw.polygon(self.gfx, self.color, pts, max(1, self.thick))
             return None
         if cmd == 'TRIANGLE':
             if not args:
                 self.console.print('?SYNTAX ERROR')
                 self.running = False
                 return None
+            if not self.pen_down:
+                return None
             d = float(self.num_or_var(args[0]))
-            for _ in range(3):
-                x2 = self.x + math.cos(math.radians(self.heading)) * d
-                y2 = self.y + math.sin(math.radians(self.heading)) * d
-                if self.pen_down:
-                    pygame.draw.line(self.gfx, self.color, (self.x, self.y), (x2, y2), self.thick)
-                self.x, self.y = x2, y2
-                self.heading = (self.heading + 120) % 360
+            h = d * math.sqrt(3) / 2.0
+            angle = math.radians(self.heading)
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            base = [
+                (0.0, 2.0 * h / 3.0),
+                (-d / 2.0, -h / 3.0),
+                (d / 2.0, -h / 3.0),
+            ]
+            pts = []
+            for x, y in base:
+                rx = x * cos_a - y * sin_a
+                ry = x * sin_a + y * cos_a
+                pts.append((self.x + rx, self.y + ry))
+            pygame.draw.polygon(self.gfx, self.color, pts, max(1, self.thick))
             return None
 
         # --- storage ---
