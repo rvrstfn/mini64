@@ -96,7 +96,10 @@ Aliases (same behavior):
 ### Graphics
 | Command | Description | Example |
 |---------|-------------|---------|
-| `CIRCLE radius` | Draw circle at current position | `CIRCLE 25` |
+| `CIRCLE diameter` | Draw circle at current position | `CIRCLE 50` |
+| `RADIUS radius` | Draw circle at current position | `RADIUS 25` |
+| `SQUARE side` | Draw square centered at current position | `SQUARE 80` |
+| `TRIANGLE side` | Draw triangle centered at current position | `TRIANGLE 80` |
 | `BG color` | Set background color | `BG BLUE` |
 
 ### Colors
@@ -127,9 +130,18 @@ Available colors: `BLACK`, `WHITE`, `RED`, `GREEN`, `BLUE`, `YELLOW`, `CYAN`, `M
 10 FOR A = 0 TO 360 STEP 30
 20 RT 30
 30 FD 50
-40 CIRCLE 20
+40 CIRCLE 40
 50 BK 50
 60 NEXT A
+```
+
+### Centered Shapes
+```basic
+10 CIRCLE 80
+20 RT 30
+30 SQUARE 100
+40 RT 30
+50 TRIANGLE 120
 ```
 
 ## Features
